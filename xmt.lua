@@ -6,9 +6,16 @@ local f_frame = ProtoField.uint8("xmt.frame", "Frame", base.HEX)
 local f_protocol = ProtoField.string("xmt.protocol", "Protocol", base.HEX)
 local f_version = ProtoField.string("xmt.version", "Version", base.HEX)
 local f_length = ProtoField.int16("xmt.length", "Length")
+local f_price = ProtoField.int64("xmt.price", "Price",base.DEC)
+local f_volume = ProtoField.int16("xmt.volume", "Volume",base.DEC)
+local f_buy_broker = ProtoField.int16("xmt.buy_broker", "Buy Broker",base.DEC)
+local f_sell_broker = ProtoField.int16("xmt.sell_broker", "Sell Broker",base.DEC)
+local f_symbol = ProtoField.string("xmt.symbol", "Symbol",base.HEX)
+local f_exchange_time = ProtoField.int64("xmt.exchange_time", "Exchange Time",base.DEC)
+--cal buyBroker = ProtoField.int16("xmt.bro", "Length")
 
 local f_debug = ProtoField.uint8("xmt.debug", "Debug")
-p_xmt.fields = {f_frame, f_protocol, f_version, f_length}
+p_xmt.fields = {f_frame, f_protocol, f_version,f_price,f_volume,f_buy_broker,f_sell_broker,f_symbol,f_exchange_time,f_length}
 
 
 
@@ -203,7 +210,9 @@ end
 function get_str_time(utctime)
 	local timee = utctime / 1000000
 	local modtime = utctime % 1000000
-	local str_time = os.date("%x %H:%M:%S", timee:lower()) .. "." .. modtime
+	--fixed time: the original version can make incorrect time if modtime is less than 100000
+	local fixed = string.format("%06d",tostring(modtime))
+	local str_time = os.date("%x %H:%M:%S", timee:lower()) .. "." .. fixed
 	return str_time
 end
 
@@ -378,6 +387,7 @@ function dissector_bussbody_addtree(buffer,subtree_body,numbody,pinfo)
 	offset = offset + 1
 	subtree_body_bushdr:add(buffer(offset,4),"Sequence-1:  " .. buffer(offset,4):le_uint())
 	offset = offset + 4;
+	--offset = 12
 	
 	local subtree_body_busbdy = subtree_body:add(buffer(offset),"<BusBdy>")
 	if msgtype == 0x4a then
@@ -772,11 +782,13 @@ function dissector_bussbody_addtree(buffer,subtree_body,numbody,pinfo)
 	elseif msgtype == 0x53 then
 		pinfo.cols.info = "Business body(Trade Report)"
 		-----Trade Report
+		-----try to fix, goal is to make it show properly on wireshark
 		subtree_body_busbdy:add(buffer(offset,9), "Symbol:  " .. buffer(offset,9):string())
 		offset = offset + 9
 		subtree_body_busbdy:add(buffer(offset,4), "Trade Number:  " .. buffer(offset,4):le_uint())
 		offset = offset + 4
-		subtree_body_busbdy:add(buffer(offset,8), "Price:  " .. buffer(offset,8):le_uint64() / 1000000 .. "." .. buffer(offset,8):le_uint64() % 1000000)
+		--fixed only in this part
+		subtree_body_busbdy:add(buffer(offset,8), "Price:  " .. buffer(offset,8):le_uint64() / 1000000 .. "." .. string.format("%06d",tostring(buffer(offset,8):le_uint64() % 1000000)))
 		offset = offset + 8
 		subtree_body_busbdy:add(buffer(offset,4), "Volume:  " .. buffer(offset,4):le_uint())
 		offset = offset + 4
@@ -931,8 +943,14 @@ function p_xmt.dissector (buf, pinfo, root)
 	subtree:add(f_frame, buf(0,1))
 	subtree:add(f_protocol, buf(1,1))
 	subtree:add(f_version, buf(2,1))
+	subtree:add_le(f_symbol,buf(11):tvb()(12,9))
+	subtree:add_le(f_price,buf(11):tvb()(25,8))
+	subtree:add_le(f_volume,buf(11):tvb()(33,4))
+	subtree:add_le(f_buy_broker,buf(11):tvb()(37,2))
+	subtree:add_le(f_sell_broker,buf(11):tvb()(51,2))
+	subtree:add_le(f_exchange_time,buf(11):tvb()(71,8))
 	subtree:add_le(f_length, buf(3,2))
-
+	
 
 	local subtree_header = subtree:add(buf(5,6), "Header")
 	--subtree_header:set_text("testdkdkdk")
@@ -955,6 +973,7 @@ function p_xmt.dissector (buf, pinfo, root)
 	elseif buf(bufoffset + 2,1):uint() >= 0x41 and buf(bufoffset + 2,1):uint() <= 0x7e then
 		subtree_body:append_text(":  <Business body>")
 		dissector_bussbody_addtree(buf(bufoffset):tvb(),subtree_body,numbody, pinfo)
+
 	else
 		subtree_body:append_text(":  (unknown)")
 	end
